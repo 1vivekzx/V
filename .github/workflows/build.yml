@@ -1,0 +1,93 @@
+
+name: Build V Browser APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build V Browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Download ZIP from repository
+        uses: actions/checkout@v4
+
+      - name: Extract V Browser ZIP
+        run: |
+          set -e
+
+          ZIP=$(find . -maxdepth 1 -type f -iname 'V-Browser.zip' | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "::error::V-Browser.zip repository mein nahi mili."
+            exit 1
+          fi
+
+          mkdir -p project
+          unzip -q "$ZIP" -d project
+
+          echo "ZIP extracted."
+
+          if [ -d project/app ]; then
+            ROOT=project
+          else
+            ROOT=$(find project -name settings.gradle -o -name settings.gradle.kts | head -n 1 | xargs dirname)
+          fi
+
+          if [ -z "$ROOT" ] || [ ! -d "$ROOT/app" ]; then
+            echo "::error::Android project nahi mila. ZIP mein app folder aur settings.gradle hone chahiye."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          sdkmanager --licenses || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        run: |
+          cd "$PROJECT_DIR"
+
+          gradle assembleDebug --no-daemon --console=plain
+
+      - name: Find APK
+        run: |
+          set -e
+          mkdir -p output
+
+          APK=$(find "$PROJECT_DIR/app/build/outputs/apk" -type f -name '*.apk' | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "::error::APK generate nahi hui."
+            exit 1
+          fi
+
+          cp "$APK" output/V-Browser.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: V-Browser-APK
+          path: output/V-Browser.apk
+          retention-days: 30
