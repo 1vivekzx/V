@@ -17,11 +17,10 @@ jobs:
       - name: Download Repository
         uses: actions/checkout@v4
 
-      - name: Find and Extract Android ZIP
+      - name: Find and Extract V Browser ZIP
         shell: bash
         run: |
           set -e
-
           mkdir -p extracted
 
           mapfile -t ZIPS < <(
@@ -38,8 +37,7 @@ jobs:
           FOUND=false
 
           for ZIP in "${ZIPS[@]}"; do
-            echo "Checking $ZIP"
-
+            echo "Checking: $ZIP"
             rm -rf extracted/*
             unzip -q "$ZIP" -d extracted || continue
 
@@ -63,7 +61,7 @@ jobs:
             exit 1
           fi
 
-          echo "Android project found!"
+          echo "Project found successfully."
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -71,10 +69,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      # Android-actions/setup-android intentionally removed.
+      # Use the runner's preinstalled Android SDK directly.
 
-      - name: Accept Licenses and Install SDK
+      - name: Setup Android SDK
         shell: bash
         run: |
           set -e
@@ -85,30 +83,28 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager | sort -V | tail -n 1)
 
-          if [ ! -f "$SDKMANAGER" ]; then
+          if [ -z "$SDKMANAGER" ]; then
             echo "::error::SDK Manager not found."
             exit 1
           fi
 
-          echo "Accepting licenses..."
+          echo "SDK Manager: $SDKMANAGER"
+
+          echo "Accepting SDK licenses..."
 
           set +e
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses \
             > /tmp/licenses.log 2>&1
-          LICENSE_STATUS=${PIPESTATUS[1]}
           set -e
 
-          if [ "$LICENSE_STATUS" -ne 0 ]; then
-            echo "License command returned $LICENSE_STATUS"
-            tail -n 20 /tmp/licenses.log
-          fi
-
-          echo "Installing SDK packages..."
+          echo "Installing Android packages..."
 
           "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
             "platform-tools" \
+            "platforms;android-33" \
             "platforms;android-34" \
             "platforms;android-35" \
             "platforms;android-36" \
@@ -116,19 +112,20 @@ jobs:
             "build-tools;35.0.0" \
             "build-tools;36.0.0"
 
-          echo "SDK installation completed."
+          echo "SDK installation successful."
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build APK
+      - name: Build V Browser APK
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
+
+          echo "Starting APK build..."
 
           if [ -f gradlew ]; then
             chmod +x gradlew
@@ -137,7 +134,7 @@ jobs:
             gradle assembleDebug --no-daemon --console=plain
           fi
 
-      - name: Find APK
+      - name: Find and Verify APK
         shell: bash
         run: |
           set -e
@@ -148,16 +145,16 @@ jobs:
             -type f -name '*.apk' | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "::error::APK not generated."
+            echo "::error::APK file not found."
             exit 1
           fi
 
           cp "$APK" output/V-Browser.apk
 
-          echo "APK successfully generated!"
-          ls -lh output/
+          echo "APK generated successfully!"
+          ls -lh output/V-Browser.apk
 
-      - name: Upload APK
+      - name: Upload V Browser APK
         uses: actions/upload-artifact@v4
         with:
           name: V-Browser-APK
