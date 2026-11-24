@@ -1,4 +1,3 @@
-
 name: Build V Browser APK
 
 on:
@@ -11,37 +10,34 @@ jobs:
   build-apk:
     name: Build V Browser
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 60
 
     steps:
       - name: Download Repository
         uses: actions/checkout@v4
 
-      - name: Find and Extract Android Project ZIP
+      - name: Find and Extract Android ZIP
         shell: bash
         run: |
           set -e
 
           mkdir -p extracted
 
-          echo "Searching for ZIP files..."
-
           mapfile -t ZIPS < <(
             find . -type f -iname '*.zip' \
             ! -path './.git/*' \
-            ! -path './extracted/*' \
-            | sort
+            ! -path './extracted/*' | sort
           )
 
           if [ ${#ZIPS[@]} -eq 0 ]; then
-            echo "::error::Repository mein koi ZIP file nahi mili."
+            echo "::error::Repository mein ZIP nahi mili."
             exit 1
           fi
 
           FOUND=false
 
           for ZIP in "${ZIPS[@]}"; do
-            echo "Checking: $ZIP"
+            echo "Checking $ZIP"
 
             rm -rf extracted/*
             unzip -q "$ZIP" -d extracted || continue
@@ -54,7 +50,6 @@ jobs:
               ROOT=$(dirname "$SETTINGS")
 
               if [ -d "$ROOT/app" ]; then
-                echo "Android project found!"
                 echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
                 FOUND=true
                 break
@@ -63,38 +58,64 @@ jobs:
           done
 
           if [ "$FOUND" != "true" ]; then
-            echo "::error::ZIP mein valid Android project nahi mila. app folder aur settings.gradle zaroori hain."
+            echo "::error::Valid Android project nahi mila."
             exit 1
           fi
 
-          echo "Project ready."
+          echo "Android project found!"
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK Packages
+      - name: Setup Android SDK and Accept Licenses
+        shell: bash
         run: |
-          sdkmanager --licenses || true
+          set -e
 
-          sdkmanager \
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT=$ANDROID_HOME
+
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager | sort -V | tail -n 1)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::SDK Manager nahi mila."
+            exit 1
+          fi
+
+          echo "Using SDK Manager: $SDKMANAGER"
+
+          echo "Accepting Android SDK licenses..."
+
+          yes | "$SDKMANAGER" --licenses \
+            > /tmp/licenses.log 2>&1 || true
+
+          echo "Installing Android SDK packages..."
+
+          yes | "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-34" \
             "platforms;android-35" \
+            "platforms;android-36" \
             "build-tools;34.0.0" \
-            "build-tools;35.0.0"
+            "build-tools;35.0.0" \
+            "build-tools;36.0.0" \
+            > /tmp/sdk-install.log 2>&1
+
+          echo "Android SDK installation completed."
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build Debug APK
+      - name: Build V Browser APK
         shell: bash
         run: |
           set -e
@@ -119,16 +140,16 @@ jobs:
             -type f -name '*.apk' | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "::error::Build ke baad APK nahi mili."
+            echo "::error::APK generate nahi hui."
             exit 1
           fi
 
           cp "$APK" output/V-Browser.apk
 
           echo "APK successfully created!"
-          ls -lh output/V-Browser.apk
+          ls -lh output/
 
-      - name: Upload V Browser APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: V-Browser-APK
