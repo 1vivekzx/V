@@ -11,42 +11,65 @@ jobs:
   build-apk:
     name: Build V Browser
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
 
     steps:
-      - name: Download ZIP from repository
+      - name: Download Repository
         uses: actions/checkout@v4
 
-      - name: Extract V Browser ZIP
+      - name: Find and Extract Android Project ZIP
+        shell: bash
         run: |
           set -e
 
-          ZIP=$(find . -maxdepth 1 -type f -iname 'V-Browser.zip' | head -n 1)
+          mkdir -p extracted
 
-          if [ -z "$ZIP" ]; then
-            echo "::error::V-Browser.zip repository mein nahi mili."
+          echo "Searching for ZIP files..."
+
+          mapfile -t ZIPS < <(
+            find . -type f -iname '*.zip' \
+            ! -path './.git/*' \
+            ! -path './extracted/*' \
+            | sort
+          )
+
+          if [ ${#ZIPS[@]} -eq 0 ]; then
+            echo "::error::Repository mein koi ZIP file nahi mili."
             exit 1
           fi
 
-          mkdir -p project
-          unzip -q "$ZIP" -d project
+          FOUND=false
 
-          echo "ZIP extracted."
+          for ZIP in "${ZIPS[@]}"; do
+            echo "Checking: $ZIP"
 
-          if [ -d project/app ]; then
-            ROOT=project
-          else
-            ROOT=$(find project -name settings.gradle -o -name settings.gradle.kts | head -n 1 | xargs dirname)
-          fi
+            rm -rf extracted/*
+            unzip -q "$ZIP" -d extracted || continue
 
-          if [ -z "$ROOT" ] || [ ! -d "$ROOT/app" ]; then
-            echo "::error::Android project nahi mila. ZIP mein app folder aur settings.gradle hone chahiye."
+            SETTINGS=$(find extracted -type f \
+              \( -name settings.gradle -o -name settings.gradle.kts \) \
+              -print -quit)
+
+            if [ -n "$SETTINGS" ]; then
+              ROOT=$(dirname "$SETTINGS")
+
+              if [ -d "$ROOT/app" ]; then
+                echo "Android project found!"
+                echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
+                FOUND=true
+                break
+              fi
+            fi
+          done
+
+          if [ "$FOUND" != "true" ]; then
+            echo "::error::ZIP mein valid Android project nahi mila. app folder aur settings.gradle zaroori hain."
             exit 1
           fi
 
-          echo "PROJECT_DIR=$ROOT" >> "$GITHUB_ENV"
+          echo "Project ready."
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -55,39 +78,60 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK
+      - name: Install Android SDK Packages
         run: |
           sdkmanager --licenses || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "platforms;android-35" \
+            "build-tools;34.0.0" \
+            "build-tools;35.0.0"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build APK
-        run: |
-          cd "$PROJECT_DIR"
-
-          gradle assembleDebug --no-daemon --console=plain
-
-      - name: Find APK
+      - name: Build Debug APK
+        shell: bash
         run: |
           set -e
+
+          cd "$PROJECT_DIR"
+
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon --console=plain
+          else
+            gradle assembleDebug --no-daemon --console=plain
+          fi
+
+      - name: Find APK
+        shell: bash
+        run: |
+          set -e
+
           mkdir -p output
 
-          APK=$(find "$PROJECT_DIR/app/build/outputs/apk" -type f -name '*.apk' | head -n 1)
+          APK=$(find "$PROJECT_DIR/app/build/outputs/apk" \
+            -type f -name '*.apk' | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "::error::APK generate nahi hui."
+            echo "::error::Build ke baad APK nahi mili."
             exit 1
           fi
 
           cp "$APK" output/V-Browser.apk
 
-      - name: Upload APK
+          echo "APK successfully created!"
+          ls -lh output/V-Browser.apk
+
+      - name: Upload V Browser APK
         uses: actions/upload-artifact@v4
         with:
           name: V-Browser-APK
           path: output/V-Browser.apk
+          if-no-files-found: error
           retention-days: 30
